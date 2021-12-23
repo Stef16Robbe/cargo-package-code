@@ -1,13 +1,14 @@
 use std::env;
-use clap::{Arg, App};
 use dotenv::dotenv;
-use reqwest::Url;
-use reqwest::header::HeaderMap;
-use serde_derive::Deserialize;
+use clap::{Arg, App};
 use exitfailure::ExitFailure;
+use serde_derive::Deserialize;
+use reqwest::{Url, StatusCode};
+use reqwest::header::HeaderMap;
 
 // https://www.reddit.com/r/rust/comments/7hasv6/comment/dqpht6v/?utm_source=share&utm_medium=web2x&context=3
-#[derive(Deserialize, Debug)] struct Items { html_url: String }
+#[derive(Deserialize, Debug)] struct Repository { html_url: String }
+#[derive(Deserialize, Debug)] struct Items { repository: Repository }
 #[derive(Deserialize, Debug)] struct Repo { items: Vec<Items> }
 
 impl Repo {
@@ -30,11 +31,36 @@ impl Repo {
             .get(url)
             .headers(headers)
             .send()
-            .await?
-            .json::<Repo>()
             .await?;
+        
+        let res = match res.status() {
+            StatusCode::OK => res.json().await?,
+            _ => panic!("Failed to request the Github API, looks like you've been rate limited. Status code: {:?}", res.status())
+        };
 
         Ok(res)
+    }
+
+    fn print_table(&self) -> Result<String, ExitFailure> {
+        let header = "─".repeat(24);
+        let mut table: String = format!(
+            "{0: <1} │ {1: <20} \n{2}\n",
+            " ",
+            "Name",
+            header
+        );
+
+        let mut i = 0;
+        for repo in &self.items {
+            table += &format!(
+                "{0: <1} │ {1: <20}\n",
+                i,
+                repo.repository.html_url
+            );
+            i += 1;
+        }
+
+        Ok(table)
     }
 }
 
@@ -60,9 +86,9 @@ async fn main() -> Result<(), ExitFailure> {
     let api_key = env::var("GITHUB_API_KEY").unwrap();
     let username = env::var("GITHUB_USERNAME").unwrap();
 
-    println!("Searching for Repo's that use the {} in their toml file...", cargo_package);
+    println!("\nSearching for Repo's that use the {} in their toml file...", cargo_package);
     let res = Repo::get(&cargo_package, &api_key, &username).await?;
-    println!("{:?}", res);
+    println!("\n{}", Repo::print_table(&res)?);
 
     Ok(())
 }
